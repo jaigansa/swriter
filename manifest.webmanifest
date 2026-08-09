@@ -1,0 +1,15 @@
+{
+  "name": "SWriter — Screenwriting Studio",
+  "short_name": "SWriter",
+  "description": "Offline-first Fountain screenwriting app with industry-standard screenplay PDF export.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f6f4f0",
+  "theme_color": "#4f46e5",
+  "icons": [
+    { "src": "assets/icon.svg", "sizes": "any", "type": "image/svg+xml" },
+    { "src": "assets/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "assets/icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}

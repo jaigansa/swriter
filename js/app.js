@@ -192,6 +192,15 @@
     }
     pagesEl.innerHTML = html;
     docEl.style.minHeight = Math.max(pageCount * dims.h, renderEl.offsetHeight + M_TOP + M_BOTTOM) + 'px';
+    applyScale();
+  }
+
+  function applyScale() {
+    if (window.innerWidth > 960) { docEl.style.zoom = ''; return; }
+    const dims = PAPERS[paper];
+    const avail = Math.max(160, editorEl.clientWidth - 16);
+    const s = Math.min(1, avail / (dims.w + 56));
+    docEl.style.zoom = s;
   }
 
   function onContentChange(value) {
@@ -514,6 +523,9 @@
   /* ---------------- topbar ---------------- */
 
   function renderTopbar() {
+    $('btn-sidebar').innerHTML = util.icon('menu');
+    $('btn-sidebar-close').innerHTML = util.icon('x');
+    $('btn-help').innerHTML = util.icon('help');
     $('btn-theme').innerHTML = theme === 'dark' ? util.icon('sun') : util.icon('moon');
     $('btn-focus').innerHTML = focusMode ? util.icon('minimize') : util.icon('maximize');
     const el = $('save-status');
@@ -541,6 +553,7 @@
   }
 
   function selectProject(id) {
+    if (window.innerWidth < 960 && sidebarOpen) toggleSidebar();
     if (!id || id === activeId) return;
     flushSave();
     activeId = id;
@@ -694,9 +707,10 @@
           label: 'Export PDF',
           primary: true,
           onClick: function () {
-            files.exportPdf(p, { pageSize: select.value, includeTitlePage: cb.checked });
             m.close();
-            util.toast('PDF exported');
+            util.toast('Exporting PDF…');
+            files.exportPdf(p, { pageSize: select.value, includeTitlePage: cb.checked })
+              .then(function () { util.toast('PDF exported'); });
           }
         }
       ]
@@ -866,6 +880,7 @@
 
   function bindTopbarEvents() {
     $('btn-sidebar').addEventListener('click', toggleSidebar);
+    $('btn-sidebar-close').addEventListener('click', toggleSidebar);
     $('btn-theme').addEventListener('click', toggleTheme);
     $('btn-focus').addEventListener('click', function () { toggleFocus(); });
     $('btn-help').addEventListener('click', openShortcuts);
@@ -939,6 +954,7 @@
       clearTimeout(saveTimer);
       flushSave();
     });
+    window.addEventListener('resize', applyScale);
   }
 
   init();

@@ -1,10 +1,11 @@
 # SWriter — Screenwriting Studio
 
-A dependency-free, offline-first **static web application** for writing screenplays in
+An offline-first **static web application** for writing screenplays in
 [Fountain](https://fountain.io) markup, with industry-standard screenplay PDF export.
 
 Everything runs in the browser: no backend, no build step, no Node.js. All data stays in
-your browser (IndexedDB with a localStorage fallback).
+your browser (IndexedDB with a localStorage fallback). Icons come from the [Lucide](https://lucide.dev)
+library, vendored locally under `js/lib/` so the app still works fully offline.
 
 ---
 
@@ -34,7 +35,9 @@ swriter/
 ├── css/
 │   └── styles.css      # dark/light themes, page view, editor overlay, all UI
 └── js/
-    ├── ui.js           # SVG icons, DOM helpers, modals, toasts
+    ├── lib/
+    │   └── lucide.min.js  # vendored Lucide icon library (ISC)
+    ├── ui.js           # Lucide icons, DOM helpers, modals, toasts
     ├── db.js           # IndexedDB persistence + localStorage fallback
     ├── caret.js        # caret-pixel measurement (editor overlay + autocomplete)
     ├── fountain.js     # Fountain parser and element classifier

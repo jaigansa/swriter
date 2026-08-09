@@ -36,10 +36,12 @@
   }
 
   function exportPdf(project, opts) {
-    const parsed = SW.fountain.parseFountain(project.content);
-    const bytes = SW.pdf.buildPdf(parsed, opts);
-    download(util.slugify(project.title) + '.pdf',
-      new Blob([bytes], { type: 'application/pdf' }));
+    return SW.pdf.ensureTamilFont().then(function () {
+      const parsed = SW.fountain.parseFountain(project.content);
+      const bytes = SW.pdf.buildPdf(parsed, opts);
+      download(util.slugify(project.title) + '.pdf',
+        new Blob([bytes], { type: 'application/pdf' }));
+    });
   }
 
   function titleFromContent(text) {
