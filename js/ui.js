@@ -108,6 +108,7 @@
         text: a.label
       });
       if (a.onClick) b.addEventListener('click', function () { a.onClick(b); });
+      else b.addEventListener('click', close);
       bar.appendChild(b);
     }
     box.appendChild(bar);
