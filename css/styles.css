@@ -709,6 +709,35 @@ body.focus-mode #sidebar { display: none; }
 }
 .toast.error { background: var(--danger); color: #fff; }
 
+/* ============ Mobile element-type bar ============ */
+.el-bar {
+  position: fixed;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 60;
+  padding-bottom: env(safe-area-inset-bottom, 0);
+}
+.el-bar-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: none;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-family: var(--font-ui);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  padding: 10px 16px;
+  border-radius: 999px;
+  box-shadow: var(--shadow);
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+.el-bar-btn:active { filter: brightness(1.12); }
+.el-bar-cur { opacity: 0.85; }
+.el-bar-arrow { opacity: 0.7; font-weight: 400; }
+
 /* ============ Responsive ============ */
 @media (max-width: 960px) {
   .sidebar { position: absolute; top: 0; bottom: 0; left: 0; z-index: 40; box-shadow: var(--shadow); width: min(292px, 82vw); min-width: 0; }

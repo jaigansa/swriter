@@ -15,10 +15,21 @@
   const inputEl = $('input');
   const acBox = $('autocomplete');
   const sidebarEl = $('sidebar');
+  const elBar = $('el-bar');
+  const elBarCur = $('el-bar-cur');
+  const elBarNext = $('el-bar-next');
 
   const M_TOP = 96, M_LEFT = 144, M_RIGHT = 96, M_BOTTOM = 96;
   const PAPERS = { letter: { w: 816, h: 1056 }, a4: { w: 794, h: 1122 } };
   const CYCLE = ['action', 'character', 'dialogue', 'parenthetical', 'transition', 'scene-heading'];
+  const TYPE_LABELS = {
+    action: 'Action',
+    character: 'Character',
+    dialogue: 'Dialogue',
+    parenthetical: 'Parenthetical',
+    transition: 'Transition',
+    'scene-heading': 'Scene Heading'
+  };
 
   const SCENE_TEMPLATE = 'INT. LOCATION - DAY\n\nDescribe the action here.\n\nCHARACTER\n(beat)\nDialogue line.\n';
 
@@ -110,6 +121,7 @@
   let focusMode = false;
   let sidebarOpen = window.innerWidth >= 960;
   let exitBtn = null;
+  const isTouch = window.matchMedia('(hover: none) and (pointer: coarse)').matches;
 
   function getProject(id) { return projects.find(function (p) { return p.id === id; }) || null; }
   function currentProject() { return getProject(activeId); }
@@ -915,6 +927,48 @@
     }
   }
 
+  /* ---------------- mobile element-type bar ---------------- */
+
+  function cycleElementType() {
+    inputEl.focus();
+    const i = lineAt(inputEl.selectionStart);
+    const cur = typeAt(i);
+    const next = CYCLE[(CYCLE.indexOf(cur) + 1) % CYCLE.length];
+    overrides.set(i, next);
+    parse();
+    renderEditor();
+    updateElementBar();
+  }
+
+  function updateElementBar() {
+    if (!elBar || elBar.hidden) return;
+    const i = lineAt(inputEl.selectionStart);
+    const cur = typeAt(i);
+    const next = CYCLE[(CYCLE.indexOf(cur) + 1) % CYCLE.length];
+    elBarCur.textContent = TYPE_LABELS[cur] || cur;
+    elBarNext.textContent = TYPE_LABELS[next] || next;
+  }
+
+  function layoutElementBar() {
+    if (!elBar || elBar.hidden) return;
+    const vv = window.visualViewport;
+    const top = vv
+      ? vv.offsetTop + vv.height - elBar.offsetHeight
+      : window.innerHeight - elBar.offsetHeight;
+    elBar.style.top = Math.max(0, top) + 'px';
+  }
+
+  function showElementBar() {
+    if (!isTouch) return;
+    elBar.hidden = false;
+    layoutElementBar();
+    updateElementBar();
+  }
+
+  function hideElementBar() {
+    if (elBar) elBar.hidden = true;
+  }
+
   function scrollToScene(idx) {
     const span = renderEl.querySelector('[data-i="' + idx + '"]');
     const pos = offsets[idx];
@@ -1259,6 +1313,7 @@
       ['Shift+Tab', 'Insert two spaces'],
       ['↑ ↓ / Enter', 'Navigate / accept autocomplete'],
       ['Escape', 'Close autocomplete'],
+      ['Mobile', 'Tap the element chip below the editor to cycle type (same as Tab)'],
       ['Ctrl/Cmd+S', 'Save now'],
       ['Ctrl/Cmd+P', 'Export PDF'],
       ['Ctrl/Cmd+Enter', 'Insert scene template'],
@@ -1326,14 +1381,18 @@
       scheduleAc();
     });
     inputEl.addEventListener('keydown', onEditorKeydown);
+    inputEl.addEventListener('focus', showElementBar);
+    inputEl.addEventListener('blur', hideElementBar);
     inputEl.addEventListener('keyup', function (e) {
       keepCaretVisible();
+      updateElementBar();
       if (['ArrowUp', 'ArrowDown', 'Enter', 'Tab', 'Escape'].includes(e.key)) return;
       scheduleAc();
     });
-    inputEl.addEventListener('mouseup', function () { keepCaretVisible(); });
+    inputEl.addEventListener('mouseup', function () { keepCaretVisible(); updateElementBar(); });
     inputEl.addEventListener('click', function () {
       if (!acState) scheduleAc();
+      updateElementBar();
     });
     inputEl.addEventListener('select', function () { });
     inputEl.addEventListener('compositionstart', function () { composing = true; });
@@ -1489,6 +1548,21 @@
     });
   }
 
+  function bindMobileBarEvents() {
+    const btn = $('el-bar-btn');
+    if (!btn) return;
+    btn.addEventListener('touchstart', function (e) {
+      e.preventDefault();
+      cycleElementType();
+    }, { passive: false });
+    const vv = window.visualViewport;
+    if (vv) {
+      vv.addEventListener('resize', layoutElementBar);
+      vv.addEventListener('scroll', layoutElementBar);
+    }
+    window.addEventListener('resize', layoutElementBar);
+  }
+
   /* ---------------- init ---------------- */
 
   async function init() {
@@ -1501,6 +1575,7 @@
     bindTopbarEvents();
     bindGlobalShortcuts();
     bindAutocompleteEvents();
+    bindMobileBarEvents();
     renderTopbar();
 
     projects = await db.all();

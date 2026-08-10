@@ -63,6 +63,8 @@ swriter/
   - `Tab` — cycle the current line's element type
     (Action → Character → Dialogue → Parenthetical → Transition → Scene Heading)
   - `Shift+Tab` — insert two spaces
+  - on touch devices, a chip below the editor shows the current element type and taps
+    through the cycle (Action → Character → Dialogue → …), same as `Tab`
   - autocomplete overlay for existing **characters** and **locations** while typing
   - **scene template** — `Ctrl/Cmd+Enter` (or the sidebar *Insert* panel) drops in a blank
     `INT. LOCATION - DAY` heading, action line and character beat at the caret, with the
