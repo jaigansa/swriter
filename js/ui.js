@@ -143,6 +143,7 @@
     archive: 'Archive',
     trash: 'Trash2',
     restore: 'RotateCcw',
+    cycle: 'Repeat',
     file: 'File',
     fileText: 'FileText',
     code: 'Code',

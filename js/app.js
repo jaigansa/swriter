@@ -16,8 +16,6 @@
   const acBox = $('autocomplete');
   const sidebarEl = $('sidebar');
   const elBar = $('el-bar');
-  const elBarCur = $('el-bar-cur');
-  const elBarNext = $('el-bar-next');
 
   const M_TOP = 96, M_LEFT = 144, M_RIGHT = 96, M_BOTTOM = 96;
   const PAPERS = { letter: { w: 816, h: 1056 }, a4: { w: 794, h: 1122 } };
@@ -942,20 +940,24 @@
 
   function updateElementBar() {
     if (!elBar || elBar.hidden) return;
+    const btn = $('el-bar-btn');
+    if (!btn) return;
     const i = lineAt(inputEl.selectionStart);
     const cur = typeAt(i);
     const next = CYCLE[(CYCLE.indexOf(cur) + 1) % CYCLE.length];
-    elBarCur.textContent = TYPE_LABELS[cur] || cur;
-    elBarNext.textContent = TYPE_LABELS[next] || next;
+    const curT = TYPE_LABELS[cur] || cur;
+    const nextT = TYPE_LABELS[next] || next;
+    btn.setAttribute('aria-label', 'Element type: ' + curT + ' — tap to cycle to ' + nextT);
+    btn.title = 'Element type: ' + curT + ' — tap to cycle to ' + nextT;
   }
 
   function layoutElementBar() {
     if (!elBar || elBar.hidden) return;
     const vv = window.visualViewport;
-    const top = vv
-      ? vv.offsetTop + vv.height - elBar.offsetHeight
-      : window.innerHeight - elBar.offsetHeight;
+    const base = vv ? vv.offsetTop + vv.height : window.innerHeight;
+    const top = base - elBar.offsetHeight - 14;
     elBar.style.top = Math.max(0, top) + 'px';
+    elBar.style.bottom = 'auto';
   }
 
   function showElementBar() {
@@ -963,6 +965,8 @@
     elBar.hidden = false;
     layoutElementBar();
     updateElementBar();
+    requestAnimationFrame(layoutElementBar);
+    setTimeout(layoutElementBar, 150);
   }
 
   function hideElementBar() {
@@ -1313,7 +1317,7 @@
       ['Shift+Tab', 'Insert two spaces'],
       ['↑ ↓ / Enter', 'Navigate / accept autocomplete'],
       ['Escape', 'Close autocomplete'],
-      ['Mobile', 'Tap the element chip below the editor to cycle type (same as Tab)'],
+      ['Mobile', 'Tap the round button (bottom-right) to cycle element type (same as Tab)'],
       ['Ctrl/Cmd+S', 'Save now'],
       ['Ctrl/Cmd+P', 'Export PDF'],
       ['Ctrl/Cmd+Enter', 'Insert scene template'],
@@ -1551,6 +1555,7 @@
   function bindMobileBarEvents() {
     const btn = $('el-bar-btn');
     if (!btn) return;
+    btn.innerHTML = util.icon('cycle');
     btn.addEventListener('touchstart', function (e) {
       e.preventDefault();
       cycleElementType();
@@ -1561,6 +1566,7 @@
       vv.addEventListener('scroll', layoutElementBar);
     }
     window.addEventListener('resize', layoutElementBar);
+    window.addEventListener('orientationchange', layoutElementBar);
   }
 
   /* ---------------- init ---------------- */
