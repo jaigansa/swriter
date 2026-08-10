@@ -23,6 +23,16 @@
       : d.toLocaleDateString([], { month: 'short', day: 'numeric' });
   }
 
+  function fmtTime(sec) {
+    const s = Math.max(0, Math.round(sec || 0));
+    if (s < 60) return s + 's';
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    const ss = s % 60;
+    const mm = String(m).padStart(2, '0');
+    return (h ? h + ':' + mm : mm) + ':' + String(ss).padStart(2, '0');
+  }
+
   function escapeHtml(s) {
     return String(s)
       .replace(/&/g, '&amp;')
@@ -135,6 +145,7 @@
     file: 'File',
     fileText: 'FileText',
     code: 'Code',
+    clock: 'Clock',
     chevronDown: 'ChevronDown',
     chevronRight: 'ChevronRight',
     x: 'X'
@@ -168,6 +179,7 @@
     uid: uid,
     slugify: slugify,
     fmtDate: fmtDate,
+    fmtTime: fmtTime,
     escapeHtml: escapeHtml,
     escapeAttr: escapeAttr,
     debounce: debounce,

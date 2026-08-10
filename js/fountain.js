@@ -14,7 +14,7 @@
     BLANK: 'blank'
   };
 
-  const KEY_VALUE_RE = /^([A-Za-z][A-Za-z0-9 ]*):\s+(.+)$/;
+  const KEY_VALUE_RE = /^([A-Za-z][A-Za-z0-9 ]*):\s*(.*)$/;
   const HEADING_RE = /^((?:INT\.\/EXT|EXT\.\/INT|INT\/EXT|INT\.EXT|I\/E|INT\/EST|EXT\/EST|EST\.\/INT|INT|EXT|EST)\.?)\s+(.+)$/i;
   const TRANSITION_RE = /^(FADE|CUT|DISSOLVE|SMASH|WIPE|IRIS|MATCH|JUMP|PULL|PUSH|RIPPLE|SWISH|WHIP|SPLIT)\s+(IN|OUT|TO|THROUGH|INTO)\s*[.:]*$/i;
   const NOTE_RE = /\[\[[\s\S]*?\]\]/g;
@@ -135,6 +135,56 @@
     return m ? (line.length - s.length) + m[0].length : 0;
   }
 
+  /* Estimated screen-time, in seconds, based on common industry word-per-line
+     pacing: dialogue ~140wpm, action reading ~170wpm. */
+  function wordCountOf(t) {
+    const m = String(t).match(/\S+/g);
+    return m ? m.length : 0;
+  }
+
+  function blockDuration(block) {
+    switch (block.type) {
+      case 'heading': return 2;
+      case 'transition': return 1.5;
+      case 'centered': return Math.max(1, wordCountOf(block.text) * 0.35);
+      case 'action': {
+        let n = 0;
+        for (const l of block.lines) n += wordCountOf(l);
+        return Math.max(1, n * 0.35);
+      }
+      case 'group': {
+        let n = 1;
+        for (const it of block.items) {
+          n += Math.max(0.5, wordCountOf(it.text) * (it.kind === 'dialogue' ? 0.42 : 0.35));
+        }
+        return n;
+      }
+      default: return 0;
+    }
+  }
+
+  function applyTimeLabels(parsed, map) {
+    const labels = map || {};
+    for (const b of parsed.blocks) {
+      if (b.type === 'group' && labels[b.idx] != null) b.dur = labels[b.idx];
+    }
+    const sceneAcc = {};
+    let curIdx = null;
+    let acc = 0;
+    for (const b of parsed.blocks) {
+      if (b.type === 'heading') {
+        if (curIdx !== null) sceneAcc[curIdx] = acc;
+        curIdx = b.idx;
+        acc = 0;
+      }
+      acc += b.dur != null ? b.dur : blockDuration(b);
+    }
+    if (curIdx !== null) sceneAcc[curIdx] = acc;
+    for (const s of parsed.scenes) {
+      s.dur = labels[s.idx] != null ? labels[s.idx] : (sceneAcc[s.idx] || 0);
+    }
+  }
+
   function parseFountain(raw, overrides) {
     const text = String(raw ?? '').replace(/\r\n?/g, '\n');
     const source = text.split('\n');
@@ -200,18 +250,25 @@
         const heading = stripSceneNumber(t);
         scenes.push({ num: scenes.length + 1, text: heading, idx: i });
         blocks.push({ type: 'heading', text: heading, idx: i });
-        const loc = headingPrefixRemoved(heading).toUpperCase();
-        if (loc && !seenLocs[loc]) {
-          seenLocs[loc] = true;
-          locations.push(loc);
+        const rawLoc = headingPrefixRemoved(heading).trim().toUpperCase();
+        if (rawLoc) {
+          const baseLoc = rawLoc.split(/\s*--?\s*/)[0].trim();
+          if (baseLoc && !seenLocs[baseLoc]) {
+            seenLocs[baseLoc] = true;
+            locations.push(baseLoc);
+          }
+          if (rawLoc !== baseLoc && !seenLocs[rawLoc]) {
+            seenLocs[rawLoc] = true;
+            locations.push(rawLoc);
+          }
         }
         lastIdx = i;
       } else if (L.type === TYPE.CHARACTER) {
-        const name = t.toUpperCase();
-        blocks.push({ type: 'group', char: t, items: [] });
-        if (!seenChars[name]) {
-          seenChars[name] = true;
-          characters.push(name);
+        blocks.push({ type: 'group', char: t, items: [], idx: i });
+        const cleanCharName = t.replace(/\s*\([^)]*\)/g, '').replace(/^@/, '').trim().toUpperCase();
+        if (cleanCharName && !seenChars[cleanCharName]) {
+          seenChars[cleanCharName] = true;
+          characters.push(cleanCharName);
         }
         lastIdx = i;
       } else if (L.type === TYPE.PARENTHETICAL) {
@@ -239,6 +296,23 @@
         lastIdx = i;
       }
     }
+
+    for (const block of blocks) {
+      if (block.type === 'group') block.dur = blockDuration(block);
+    }
+    const sceneDur = {};
+    let curSceneIdx = null;
+    let sceneAcc = 0;
+    for (const block of blocks) {
+      if (block.type === 'heading') {
+        if (curSceneIdx !== null) sceneDur[curSceneIdx] = sceneAcc;
+        curSceneIdx = block.idx;
+        sceneAcc = 0;
+      }
+      sceneAcc += block.dur != null ? block.dur : blockDuration(block);
+    }
+    if (curSceneIdx !== null) sceneDur[curSceneIdx] = sceneAcc;
+    for (const s of scenes) s.dur = sceneDur[s.idx] || 0;
 
     let wordCount = 0;
     for (const L of lines) {
@@ -269,6 +343,8 @@
     parseFountain: parseFountain,
     clean: clean,
     headingPrefixLen: headingPrefixLen,
+    blockDuration: blockDuration,
+    applyTimeLabels: applyTimeLabels,
     isAllCaps: isAllCaps
   };
 })(window.SW = window.SW || {});

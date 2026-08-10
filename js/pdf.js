@@ -6,7 +6,7 @@
     a4: { w: 595.28, h: 841.89, ml: 108, mr: 72, mt: 72, mb: 72 }
   };
 
-  const LH = 14;
+  const LH = 16;
   const CHAR_W = 7.2;
 
   function classifyActionLine(line, drawn, pageChars) {
@@ -29,7 +29,7 @@
     action: { left: 108, width: 432, align: 'left' },
     transition: { left: 216, width: 324, align: 'right' },
     centered: { left: 108, width: 432, align: 'center' },
-    character: { left: 144, width: 396, align: 'left' },
+    character: { left: 144, width: 396, align: 'center' },
     parenthetical: { left: 144, width: 288, align: 'left' },
     dialogue: { left: 72, width: 468, align: 'left' }
   };
@@ -81,6 +81,8 @@
     let page = { lines: [] };
     let y = g.mt;
     const blocks = parsed.blocks || [];
+    const sceneDur = {};
+    for (const s of parsed.scenes || []) sceneDur[s.idx] = s.dur || 0;
     let contName = null;
     let prevGroup = false;
     const pageChars = Math.max(1, Math.floor((g.w - g.ml - g.mr) / CHAR_W));
@@ -133,6 +135,7 @@
         if (!fits(3)) newPage();
         blank();
         blank();
+        if (sceneDur[block.idx]) drawn[0].sceneDur = sceneDur[block.idx];
         for (const ln of drawn) { if (!fits(1)) newPage(); put(ln); }
         prevGroup = false;
         continue;
@@ -159,6 +162,7 @@
       }
 
       const name = drawn[0].text;
+      if (block.dur) drawn[0].dialDur = block.dur;
       contName = null;
       let idx = 0;
       if (!fits(3)) newPage();
@@ -443,21 +447,53 @@
       p(d.getHours()) + p(d.getMinutes()) + p(d.getSeconds());
   }
 
+  function stampStr(d) {
+    const p = function (n) { return String(n).padStart(2, '0'); };
+    const h = d.getHours();
+    const ap = h >= 12 ? 'PM' : 'AM';
+    const hh = ((h + 11) % 12) + 1;
+    return p(d.getMonth() + 1) + '/' + p(d.getDate()) + '/' + d.getFullYear() +
+      '  ' + hh + ':' + p(d.getMinutes()) + ' ' + ap;
+  }
+
+  function drawStamp(ops, g, stamp) {
+    if (!stamp) return;
+    const st = 'Exported ' + stamp;
+    drawText(ops, g.w - g.mr - textWidth(st, 9), g.h - 20.4, st, 9, false);
+  }
+
+  function fmtSec(sec) {
+    const s = Math.max(0, Math.round(sec || 0));
+    if (s < 60) return s + 's';
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    const ss = s % 60;
+    const mm = String(m).padStart(2, '0');
+    return (h ? h + ':' + mm : mm) + ':' + String(ss).padStart(2, '0');
+  }
+
+  function drawTime(ops, g, base, text) {
+    drawText(ops, g.ml - 12 - textWidth(text, 9), base + (LH - 9) / 2, text, 9, false);
+  }
+
   function buildPdf(parsed, opts) {
     const pageSize = (opts && opts.pageSize) || 'letter';
     const includeTitle = opts ? opts.includeTitlePage !== false : true;
+    const includeStamp = opts ? opts.includeStamp !== false : true;
+    const includeTime = opts ? opts.includeTime !== false : true;
     const g = GEOM[pageSize] || GEOM.letter;
     const hasTitle = includeTitle && parsed.title && parsed.title.length > 0;
     const pages = paginate(parsed, pageSize);
+    const stamp = includeStamp ? stampStr(new Date()) : '';
 
     usedMap.clear();
 
     const contentStreams = [];
     if (hasTitle) {
-      contentStreams.push(titlePageStream(parsed.title, g));
+      contentStreams.push(titlePageStream(parsed.title, g, stamp));
     }
     for (let i = 0; i < pages.length; i++) {
-      contentStreams.push(scriptPageStream(pages[i], i + 1, g));
+      contentStreams.push(scriptPageStream(pages[i], i + 1, g, stamp, includeTime));
     }
 
     const hasTamil = !!(tamilFont && usedMap.size > 0);
@@ -522,14 +558,17 @@
     return bytes;
   }
 
-  function scriptPageStream(page, num, g) {
+  function scriptPageStream(page, num, g, stamp, includeTime) {
     const ops = [];
     const pn = num + '.';
     drawText(ops, g.w - g.mr - textWidth(pn, 12), g.h - 36 - 2.4, pn, 12, false);
+    drawStamp(ops, g, stamp);
     let y = g.mt;
     for (const ln of page.lines) {
       const ty = ln.type;
       const base = g.h - (typeof ln.y === 'number' ? ln.y : y) - 2.4;
+      if (includeTime && ln.sceneDur) drawTime(ops, g, base, fmtSec(ln.sceneDur));
+      else if (includeTime && ln.dialDur) drawTime(ops, g, base, fmtSec(ln.dialDur));
       if (ty === 'rule') {
         ops.push('q 0 0 0 RG 1 w ' + g.ml + ' ' + (base + 0.6) + ' m ' + (g.w - g.mr) + ' ' + (base + 0.6) + ' l S Q');
       } else if (ty === 'section') {
@@ -542,24 +581,27 @@
         drawText(ops, g.ml + ln.xoff, base, ln.text, 12, false);
       } else {
         const geo = TYPE_GEO[ln.type] || TYPE_GEO.action;
+        const sizes = { 'scene-heading': 14, character: 13, transition: 13, centered: 13 };
+        const size = sizes[ln.type] || 12;
         let x = geo.left;
-        const w = textWidth(ln.text, 12);
+        const w = textWidth(ln.text, size);
         if (geo.align === 'right') x = g.w - g.mr - w;
         else if (geo.align === 'center') x = (g.w - w) / 2;
-        drawText(ops, x, base, ln.text, 12, false);
+        drawText(ops, x, base, ln.text, size, true);
       }
       if (typeof ln.y === 'number') y = ln.y + LH; else y += LH;
     }
     return ops.join('\n');
   }
 
-  function titlePageStream(meta, g) {
+  function titlePageStream(meta, g, stamp) {
     const ops = [];
     const title = (metaValue(meta, 'title') || 'UNTITLED').toUpperCase();
     const credit = metaValue(meta, 'credit');
     const author = metaValue(meta, 'author');
     const date = metaValue(meta, 'draft date') || metaValue(meta, 'date');
     const contact = metaValue(meta, 'contact');
+    drawStamp(ops, g, stamp);
     if (date) {
       drawText(ops, g.w - g.mr - textWidth(date, 12), g.h - 66, date, 12, false);
     }

@@ -72,11 +72,26 @@ swriter/
 - **Import** — `.fountain`, `.txt`, and `.json` backups (single or multiple files).
 - **Export**
   - **PDF** — hand-rolled client-side PDF generator (no libraries): US Letter or A4,
-    optional title page, page numbers, Courier metrics, ~1 page per minute of runtime.
+    optional title page, page numbers, Courier metrics, ~1 page per minute of runtime,
+    an optional export date/time footer on every page, and optional scene/dialogue
+    time labels in the left margin (mirrors the editor badges, manual overrides included).
   - `.fountain` / `.txt` raw script
   - `.json` full backup archive
 - **Scene outline** — collapsible sidebar index generated live from scene headings;
   click any scene to jump straight to it and place the caret there.
+- **Time labels** — estimated screen-time badges (based on dialogue ~140wpm, action
+  ~170wpm pacing) shown in the editor margin next to every scene heading and character
+  block, plus per-scene duration pills in the scene outline. Each label has **− / +**
+  stepper buttons for fast manual tweaks (step adapts to the current duration, 1–30s);
+  click the value to set a manual duration (e.g. `90`, `1:30`, `2m`); manual values persist
+  with the script and clearing the field reverts to the estimate. Click a **scene** badge or
+  the outline pill to open the scene time breakdown — every dialogue in the scene with its
+  duration and a per-dialogue manual override, **− / +** steppers on every row and the scene
+  total, an action/transition subtotal, a live-updating
+  scene total, and a one-click reset of all overrides for that scene. Setting a **scene total**
+  (in the breakdown or via the scene badge steppers) scales every dialogue in that scene
+  proportionally so the dialogue times rise and fall with the total. Labels can be hidden for
+  distraction-free drafting with the clock button in the top bar (`Ctrl/Cmd+Shift+T`).
 - **Stats** — pages, words, scenes, estimated runtime.
 - **Focus mode** (`Ctrl/Cmd+E`) — hides chrome for distraction-free writing.
 - **Dark / light theme** — persisted, high-contrast element colors per theme.
@@ -97,6 +112,7 @@ swriter/
 | `Ctrl/Cmd+P` | Export PDF |
 | `Ctrl/Cmd+E` | Toggle focus mode |
 | `Ctrl/Cmd+B` | Toggle sidebar |
+| `Ctrl/Cmd+Shift+T` | Toggle time labels |
 
 ## Formatting notes
 

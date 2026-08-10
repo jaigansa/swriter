@@ -22,6 +22,17 @@
 
   const SCENE_TEMPLATE = 'INT. LOCATION - DAY\n\nDescribe the action here.\n\nCHARACTER\n(beat)\nDialogue line.\n';
 
+  const DEFAULT_LOCATIONS = [
+    'LIVING ROOM', 'KITCHEN', 'BEDROOM', 'BASEMENT', 'OFFICE', 'STREET',
+    'ALLEYWAY', 'CAR', 'PARKING LOT', 'HALLWAY', 'ROOFTOP', 'RESTAURANT',
+    'COFFEE SHOP', 'POLICE STATION', 'HOSPITAL', 'APARTMENT', 'BATHROOM'
+  ];
+  const SCENE_PREFIXES = ['INT.', 'EXT.', 'INT./EXT.', 'EXT./INT.', 'I/E', 'EST.'];
+  const SCENE_TIMES = ['- DAY', '- NIGHT', '- CONTINUOUS', '- MORNING', '- EVENING', '- LATER', '- MOMENTS LATER', '- SAME TIME'];
+  const TRANSITIONS = ['CUT TO:', 'FADE OUT.', 'FADE IN:', 'DISSOLVE TO:', 'SMASH CUT TO:', 'MATCH CUT TO:', 'BLACKOUT.'];
+
+  const DEFAULT_HEADER = 'Title: \nCredit: \nAuthor: \nDraft date: \n\n';
+
   const SAMPLE = [
     "Title: The Crossroads of Dharma",
     "Credit: A Dramatic Scene from the Mahabharata (Gita Upadesh)",
@@ -83,6 +94,7 @@
   let saveTimer = null;
   let acTimer = null;
   let acState = null;
+  let suppressAcUntil = 0;
   let renamingId = null;
   let composing = false;
   let saveStatus = 'idle';
@@ -93,6 +105,8 @@
   let theme = savedTheme === 'dark' || savedTheme === 'light' ? savedTheme : 'light';
   const savedPaper = localStorage.getItem('swriter:paper');
   let paper = savedPaper === 'letter' || savedPaper === 'a4' ? savedPaper : 'letter';
+  const savedTimeLabels = localStorage.getItem('swriter:timelabels');
+  let timeLabelsOn = savedTimeLabels !== 'off';
   let focusMode = false;
   let sidebarOpen = window.innerWidth >= 960;
   let exitBtn = null;
@@ -113,6 +127,27 @@
   function parse() {
     parsed = fountain.parseFountain(content, overrides);
     offsets = offsetsOf(parsed.lines);
+    applyTimeOverrides();
+  }
+
+  function applyTimeOverrides() {
+    const p = currentProject();
+    const map = (p && p.timeLabels) || {};
+    for (const b of parsed.blocks) {
+      if (b.type === 'group') b.manual = map[b.idx] != null;
+    }
+    for (const s of parsed.scenes) s.manual = map[s.idx] != null;
+    fountain.applyTimeLabels(parsed, map);
+  }
+
+  function parseDur(v) {
+    const s = String(v).trim().toLowerCase();
+    const hm = s.match(/^(?:(\d+):)?(\d{1,2}):(\d{1,2})$/);
+    if (hm) return (hm[1] ? parseInt(hm[1], 10) : 0) * 3600 + parseInt(hm[2], 10) * 60 + parseInt(hm[3], 10);
+    if (/^\d+(\.\d+)?m$/.test(s)) return Math.round(parseFloat(s) * 60);
+    if (/^\d+(\.\d+)?s$/.test(s)) return Math.round(parseFloat(s));
+    if (/^\d+(\.\d+)?$/.test(s)) return Math.round(parseFloat(s));
+    return NaN;
   }
   function lineAt(pos) {
     let lo = 0, hi = offsets.length - 2, res = 0;
@@ -179,6 +214,401 @@
     renderEl.innerHTML = html;
     pageCount = SW.pdf.paginate(parsed, paper).length || 1;
     renderPages();
+    renderTimeLabels();
+  }
+
+  function renderTimeLabels() {
+    const old = renderEl.querySelectorAll('.time-label, .time-label-input');
+    for (const lb of old) lb.remove();
+    if (!timeLabelsOn || !parsed) return;
+    const items = [];
+    for (const s of parsed.scenes) {
+      items.push({ idx: s.idx, dur: s.dur, cls: 'scene', manual: !!s.manual });
+    }
+    for (const b of parsed.blocks) {
+      if (b.type === 'group') {
+        items.push({ idx: b.idx, dur: b.dur, cls: 'dialogue', manual: !!b.manual });
+      }
+    }
+    for (const it of items) {
+      const span = renderEl.querySelector('[data-i="' + it.idx + '"]');
+      if (!span) continue;
+      const lb = document.createElement('span');
+      lb.className = 'time-label ' + it.cls + (it.manual ? ' manual' : ' auto');
+      lb.dataset.idx = it.idx;
+      lb.dataset.cls = it.cls;
+      const editTitle = it.cls === 'scene'
+        ? 'Scene time breakdown — click to view and edit'
+        : (it.manual ? 'Manual' : 'Estimated') + ' dialogue duration — click to edit';
+      lb.innerHTML =
+        '<button type="button" class="tl-btn" data-act="minus" aria-label="Decrease duration" title="Decrease (-)">−</button>' +
+        '<button type="button" class="tl-btn tl-value" data-act="edit" title="' + editTitle + '">' +
+        util.icon('clock') + '<span>' + util.fmtTime(it.dur) + '</span></button>' +
+        '<button type="button" class="tl-btn" data-act="plus" aria-label="Increase duration" title="Increase (+)">+</button>';
+      lb.addEventListener('click', function (e) {
+        const b = e.target.closest('.tl-btn');
+        if (!b) return;
+        const act = b.dataset.act;
+        if (act === 'minus') changeTime(it.idx, it.cls, -1);
+        else if (act === 'plus') changeTime(it.idx, it.cls, 1);
+        else if (act === 'edit') {
+          if (it.cls === 'scene') openSceneBreakdown(it.idx);
+          else editTimeLabel(it.idx, it.cls, it.dur);
+        }
+      });
+      lb.style.top = span.offsetTop + 'px';
+      renderEl.appendChild(lb);
+    }
+  }
+
+  function durStep(sec) {
+    return Math.max(1, Math.min(30, Math.round((sec || 0) * 0.1)));
+  }
+
+  function changeTime(idx, cls, dir) {
+    const p = currentProject();
+    if (!p) return;
+    const nm = Object.assign({}, p.timeLabels || {});
+    if (cls === 'scene') {
+      const s = parsed.scenes.find(function (x) { return x.idx === idx; });
+      if (!s) return;
+      const step = durStep(s.dur);
+      const next = Math.max(1, Math.round(s.dur + dir * step));
+      scaleSceneDialogues(nm, idx, next);
+    } else {
+      const b = parsed.blocks.find(function (x) { return x.type === 'group' && x.idx === idx; });
+      if (!b) return;
+      const step = durStep(b.dur);
+      const next = Math.max(1, Math.round(b.dur + dir * step));
+      nm[idx] = next;
+    }
+    p.timeLabels = nm;
+    scheduleSave();
+    parse();
+    renderEditor();
+  }
+
+  let editingLabel = null;
+
+  function commitTimeLabel() {
+    if (!editingLabel) return;
+    const input = editingLabel.input;
+    const idx = editingLabel.idx;
+    editingLabel = null;
+    const v = input.value.trim();
+    let sec = null;
+    if (v !== '') {
+      const n = parseDur(v);
+      if (isNaN(n)) {
+        renderTimeLabels();
+        util.toast('Invalid time — use e.g. 90, 1:30 or 2m', 'error');
+        return;
+      }
+      sec = n;
+    }
+    const p = currentProject();
+    if (p) {
+      const nm = Object.assign({}, p.timeLabels || {});
+      if (sec == null) delete nm[idx]; else nm[idx] = sec;
+      p.timeLabels = nm;
+      scheduleSave();
+    }
+    parse();
+    renderEditor();
+  }
+
+  function cancelTimeLabelEdit() {
+    if (!editingLabel) return;
+    editingLabel = null;
+    renderTimeLabels();
+  }
+
+  function editTimeLabel(idx, cls, currentDur) {
+    if (editingLabel) commitTimeLabel();
+    const span = renderEl.querySelector('[data-i="' + idx + '"]');
+    if (!span) return;
+    const p = currentProject();
+    const map = (p && p.timeLabels) || {};
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'time-label-input';
+    input.value = map[idx] != null ? util.fmtTime(map[idx]) : util.fmtTime(currentDur);
+    input.placeholder = 'e.g. 1:30';
+    input.title = 'Manual time — Enter to save, Esc to cancel, empty clears';
+    input.style.top = span.offsetTop + 'px';
+    renderEl.appendChild(input);
+    editingLabel = { input: input, idx: idx };
+    input.focus();
+    input.select();
+    input.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') { e.preventDefault(); commitTimeLabel(); }
+      else if (e.key === 'Escape') { e.preventDefault(); cancelTimeLabelEdit(); }
+    });
+    input.addEventListener('blur', function () { commitTimeLabel(); });
+  }
+
+  function sceneDialogues(sceneIdx) {
+    const out = [];
+    let inScene = false;
+    for (const b of parsed.blocks) {
+      if (b.type === 'heading') {
+        if (inScene) break;
+        if (b.idx === sceneIdx) { inScene = true; continue; }
+        continue;
+      }
+      if (inScene && b.type === 'group') out.push(b);
+    }
+    return out;
+  }
+
+  function sceneBlockDurations(sceneIdx) {
+    const est = {};
+    let total = 0;
+    let inScene = false;
+    for (const b of parsed.blocks) {
+      if (b.type === 'heading') {
+        if (b.idx === sceneIdx) { inScene = true; total += fountain.blockDuration(b); continue; }
+        if (inScene) break;
+        continue;
+      }
+      if (!inScene) continue;
+      const d = b.dur != null ? b.dur : fountain.blockDuration(b);
+      total += d;
+      if (b.type === 'group') est[b.idx] = d;
+    }
+    return { total: total, dialogs: est };
+  }
+
+  function scaleSceneDialogues(nm, sceneIdx, target) {
+    delete nm[sceneIdx];
+    const parts = sceneBlockDurations(sceneIdx);
+    const dialogs = sceneDialogues(sceneIdx);
+    let dialSum = 0;
+    for (const d of dialogs) dialSum += parts.dialogs[d.idx] || 0;
+    const scale = dialSum > 0 ? Math.max(0, target - (parts.total - dialSum)) / dialSum : 1;
+    for (const d of dialogs) {
+      nm[d.idx] = Math.max(1, Math.round((parts.dialogs[d.idx] || 0) * scale));
+    }
+  }
+
+  function openSceneBreakdown(sceneIdx) {
+    const scene = parsed.scenes.find(function (s) { return s.idx === sceneIdx; });
+    if (!scene) return;
+    const dialogs = sceneDialogues(sceneIdx);
+    let parts = sceneBlockDurations(sceneIdx);
+    let dialEst = parts.dialogs;
+    let otherEst = parts.total - dialogs.reduce(function (a, d) { return a + dialEst[d.idx]; }, 0);
+
+    function refreshParts() {
+      parts = sceneBlockDurations(sceneIdx);
+      dialEst = parts.dialogs;
+      otherEst = parts.total - dialogs.reduce(function (a, d) { return a + dialEst[d.idx]; }, 0);
+    }
+
+    const body = util.el('div', { class: 'breakdown' });
+
+    function commitField(inp) {
+      const p = currentProject();
+      if (!p) return;
+      const nm = Object.assign({}, p.timeLabels || {});
+      const idx = Number(inp.dataset.idx);
+      const isScene = inp.dataset.kind === 'scene';
+      const v = inp.value.trim();
+      let sec = null;
+      if (v !== '') {
+        const n = parseDur(v);
+        if (isNaN(n)) {
+          util.toast('Invalid time — use e.g. 90, 1:30 or 2m', 'error');
+          render();
+          return;
+        }
+        sec = n;
+      }
+      let changed;
+      if (isScene) {
+        const had = nm[scene.idx] != null;
+        changed = sec == null ? had : sec !== parts.total;
+        if (sec == null) {
+          delete nm[scene.idx];
+        } else {
+          scaleSceneDialogues(nm, scene.idx, sec);
+          util.toast('Scene total scaled across dialogues');
+        }
+      } else {
+        const was = nm[idx];
+        changed = sec == null ? was != null : was !== sec;
+        if (sec == null) delete nm[idx]; else nm[idx] = sec;
+      }
+      if (changed) {
+        p.timeLabels = nm;
+        scheduleSave();
+        parse();
+        renderEditor();
+      }
+      render();
+    }
+
+    function resetOverrides() {
+      const p = currentProject();
+      if (!p) return;
+      const nm = Object.assign({}, p.timeLabels || {});
+      delete nm[scene.idx];
+      for (const d of dialogs) delete nm[d.idx];
+      p.timeLabels = nm;
+      scheduleSave();
+      parse();
+      renderEditor();
+      render();
+      util.toast('Scene time overrides cleared');
+    }
+
+    function setTotal(sec) {
+      const el = body.querySelector('.breakdown-total .breakdown-cur');
+      if (el) el.textContent = util.fmtTime(sec);
+    }
+
+    function rowCurrent(inp) {
+      const row = inp.closest('.breakdown-row');
+      const cur = row ? row.querySelector('.breakdown-cur') : null;
+      if (!cur) return;
+      const idx = Number(inp.dataset.idx);
+      const v = inp.value.trim();
+      if (v === '') cur.textContent = util.fmtTime(dialEst[idx]);
+      else {
+        const n = parseDur(v);
+        cur.textContent = isNaN(n) ? util.fmtTime(dialEst[idx]) : util.fmtTime(n);
+      }
+    }
+
+    function recomputeTotal() {
+      const sceneInp = body.querySelector('.bd-input[data-kind="scene"]');
+      const sv = sceneInp ? sceneInp.value.trim() : '';
+      if (sv !== '') {
+        const n = parseDur(sv);
+        if (!isNaN(n)) { setTotal(n); return; }
+      }
+      let sum = otherEst;
+      const dInputs = body.querySelectorAll('.bd-input[data-kind="dialogue"]');
+      for (const inp of dInputs) {
+        const idx = Number(inp.dataset.idx);
+        const v = inp.value.trim();
+        if (v === '') sum += dialEst[idx];
+        else {
+          const n = parseDur(v);
+          sum += isNaN(n) ? dialEst[idx] : n;
+        }
+      }
+      setTotal(sum);
+    }
+
+    function tag(manual) {
+      return '<span class="breakdown-tag ' + (manual ? 'manual' : 'est') + '">' +
+        (manual ? 'manual' : 'est') + '</span>';
+    }
+
+    function stepButtons(idx, kind) {
+      return '<button type="button" class="tl-btn bd-btn" data-kind="' + kind + '" data-idx="' + idx +
+        '" data-step="-1" aria-label="Decrease duration" title="Decrease (-)">−</button>' +
+        '<button type="button" class="tl-btn bd-btn" data-kind="' + kind + '" data-idx="' + idx +
+        '" data-step="1" aria-label="Increase duration" title="Increase (+)">+</button>';
+    }
+
+    function stepField(btn) {
+      const idx = Number(btn.dataset.idx);
+      const dir = Number(btn.dataset.step);
+      const isScene = btn.dataset.kind === 'scene';
+      const inp = body.querySelector('.bd-input[data-idx="' + idx + '"]');
+      if (!inp) return;
+      const raw = inp.value.trim();
+      let base;
+      if (raw !== '') {
+        const n = parseDur(raw);
+        if (isNaN(n)) return;
+        base = n;
+      } else {
+        base = isScene ? parts.total : (dialEst[idx] || 0);
+      }
+      const next = Math.max(1, Math.round(base + dir * durStep(base)));
+      inp.value = util.fmtTime(next);
+      commitField(inp);
+    }
+
+    function render() {
+      refreshParts();
+      const p = currentProject();
+      const m = (p && p.timeLabels) || {};
+      let html = '<div class="breakdown-head"><span class="breakdown-scene-no">' + scene.num +
+        '</span>' + util.escapeHtml(scene.text) + '</div>';
+      html += '<div class="breakdown-rows">';
+      if (!dialogs.length) {
+        html += '<div class="breakdown-empty">No dialogue in this scene.</div>';
+      } else {
+        for (const d of dialogs) {
+          const manual = m[d.idx] != null;
+          html += '<div class="breakdown-row">' +
+            '<span class="breakdown-name" title="' + util.escapeAttr(d.char) + '">' +
+            util.escapeHtml(d.char) + '</span>' + tag(manual) + stepButtons(d.idx, 'dialogue') +
+            '<input type="text" class="bd-input" data-kind="dialogue" data-idx="' + d.idx +
+            '" placeholder="' + util.fmtTime(dialEst[d.idx]) + '" value="' +
+            (manual ? util.fmtTime(m[d.idx]) : '') + '" aria-label="Manual duration for ' +
+            util.escapeAttr(d.char) + '" title="Manual duration — Enter saves, Esc cancels, empty clears" />' +
+            '<span class="breakdown-cur">' + (manual ? util.fmtTime(m[d.idx]) : util.fmtTime(dialEst[d.idx])) + '</span>' +
+            '</div>';
+        }
+      }
+      html += '</div>';
+      html += '<div class="breakdown-other">Action, transitions &amp; more: ' +
+        util.fmtTime(Math.max(0, otherEst)) + ' <span class="muted">(read-only)</span></div>';
+      const totalManual = m[scene.idx] != null;
+      html += '<div class="breakdown-total">' +
+        '<span class="breakdown-total-label">Scene total</span>' + tag(totalManual) + stepButtons(scene.idx, 'scene') +
+        '<input type="text" class="bd-input" data-kind="scene" data-idx="' + scene.idx +
+        '" placeholder="' + util.fmtTime(parts.total) + '" value="' +
+        (totalManual ? util.fmtTime(m[scene.idx]) : '') +
+        '" aria-label="Manual duration for the whole scene" title="Manual duration — Enter saves, Esc cancels, empty clears" />' +
+        '<span class="breakdown-cur">' + (totalManual ? util.fmtTime(m[scene.idx]) : util.fmtTime(parts.total)) + '</span>' +
+        '</div>';
+      body.innerHTML = html;
+      let suppressBlur = false;
+      const buttons = body.querySelectorAll('.bd-btn');
+      for (const btn of buttons) {
+        btn.addEventListener('mousedown', function () {
+          suppressBlur = true;
+          setTimeout(function () { suppressBlur = false; }, 150);
+        });
+        btn.addEventListener('click', function () {
+          suppressBlur = false;
+          stepField(btn);
+        });
+      }
+      const inputs = body.querySelectorAll('.bd-input');
+      for (const inp of inputs) {
+        inp.addEventListener('input', function () {
+          if (inp.dataset.kind === 'dialogue') rowCurrent(inp);
+          recomputeTotal();
+        });
+        inp.addEventListener('keydown', function (e) {
+          if (e.key === 'Enter') { e.preventDefault(); inp.blur(); }
+          else if (e.key === 'Escape') { e.preventDefault(); render(); }
+        });
+        inp.addEventListener('blur', function () {
+          if (suppressBlur) return;
+          commitField(inp);
+        });
+      }
+    }
+
+    render();
+    const m = util.modal({
+      title: 'Scene time breakdown',
+      body: body,
+      actions: [
+        { label: 'Reset overrides', onClick: function () { resetOverrides(); } },
+        { label: 'Close', primary: true, onClick: function (b) { b.closest('.modal-backdrop').remove(); } }
+      ]
+    });
+    const first = m.box.querySelector('.bd-input');
+    if (first) first.focus();
   }
 
   function renderPages() {
@@ -228,53 +658,125 @@
   }
 
   function computeAc() {
+    if (Date.now() < suppressAcUntil) { hideAc(); return; }
     const pos = inputEl.selectionStart;
+    if (inputEl.selectionEnd !== pos) { hideAc(); return; }
+
     const i = lineAt(pos);
-    const L = parsed.lines[i];
+    const L = parsed ? parsed.lines[i] : null;
     if (!L) { hideAc(); return; }
-    const t = typeAt(i);
+
     const lineStart = offsets[i];
     const caretCol = pos - lineStart;
-    let token = '', list = [], replaceStart = lineStart;
-    if (t === 'character') {
-      token = L.text.slice(0, caretCol).trim();
-      list = parsed.characters || [];
-    } else if (t === 'scene-heading') {
-      const plen = fountain.headingPrefixLen(L.text);
-      replaceStart = lineStart + plen;
-      token = L.text.slice(plen, caretCol).trim();
-      list = parsed.locations || [];
-    } else if (t === 'action') {
-      token = L.text.slice(0, caretCol).trim();
-      const upper = token.toUpperCase();
-      const looksLikeName = token.length >= 2 &&
-        /^[A-Z0-9'.,\- ]*$/.test(token) && token === upper && /[A-Z]/.test(token);
-      if (!looksLikeName) { hideAc(); return; }
-      list = parsed.characters || [];
-    } else {
-      hideAc();
-      return;
+    const textUpToCaret = L.text.slice(0, caretCol);
+
+    let token = '';
+    let list = [];
+    let replaceStart = lineStart;
+
+    // 1. Scene Heading Prefix completion at start of line
+    const isLineStart = textUpToCaret.trimStart() === textUpToCaret;
+    const upTrimmed = textUpToCaret.trim().toUpperCase();
+    if (isLineStart && textUpToCaret.trim().length >= 1 && textUpToCaret.trim().length <= 8 && !textUpToCaret.includes(' ')) {
+      const matches = SCENE_PREFIXES.filter(function (p) { return p.startsWith(upTrimmed); });
+      if (matches.length > 0 && !SCENE_PREFIXES.includes(upTrimmed + '.')) {
+        token = textUpToCaret.trim();
+        list = matches;
+        replaceStart = lineStart + (textUpToCaret.length - textUpToCaret.trimStart().length);
+      }
     }
-    if (token.length < 2) { hideAc(); return; }
-    const upper = token.toUpperCase();
-    const items = list.filter(function (n) {
-      return n.toUpperCase().startsWith(upper);
-    }).slice(0, 8);
-    if (!items.length) { hideAc(); return; }
+
+    // 2. Scene Heading Location / Time completion
+    if (!list.length) {
+      const t = typeAt(i);
+      const isHeading = t === 'scene-heading' || /^(?:INT\.\/EXT|EXT\.\/INT|INT\/EXT|INT\.EXT|I\/E|INT\/EST|EXT\/EST|EST\.\/INT|INT|EXT|EST)\.?\s+/i.test(L.text);
+      if (isHeading) {
+        const plen = fountain.headingPrefixLen(L.text);
+        if (caretCol >= plen) {
+          const locText = textUpToCaret.slice(plen);
+          const dashIdx = locText.lastIndexOf('-');
+          if (dashIdx !== -1) {
+            token = locText.slice(dashIdx).trim();
+            const timeUp = token.toUpperCase();
+            list = SCENE_TIMES.filter(function (st) { return st.toUpperCase().startsWith(timeUp); });
+            replaceStart = lineStart + plen + dashIdx;
+          } else {
+            token = locText.trimStart();
+            const locUp = token.toUpperCase();
+            replaceStart = lineStart + plen + (locText.length - locText.trimStart().length);
+            const allLocs = Array.from(new Set([].concat(parsed.locations || [], DEFAULT_LOCATIONS)));
+            if (locUp.length >= 1) {
+              list = allLocs.filter(function (n) { return n.toUpperCase().startsWith(locUp); });
+            } else if (locText.endsWith(' ')) {
+              list = allLocs.slice(0, 8);
+            }
+          }
+        }
+      }
+    }
+
+    // 3. Transition completion
+    if (!list.length && L.text.startsWith('>')) {
+      token = textUpToCaret.slice(1).trimStart();
+      const trUp = token.toUpperCase();
+      replaceStart = lineStart + 1;
+      list = TRANSITIONS.filter(function (tr) { return tr.toUpperCase().startsWith(trUp); });
+    }
+
+    // 4. Character Name completion
+    if (!list.length) {
+      const t = typeAt(i);
+      const isForcedChar = L.text.startsWith('@');
+      let isCharCandidate = t === 'character' || isForcedChar;
+      let charPrefixOffset = isForcedChar ? 1 : 0;
+
+      if (!isCharCandidate && t === 'action') {
+        const charToken = textUpToCaret.slice(charPrefixOffset).trim();
+        const upper = charToken.toUpperCase();
+        const isStartOfLine = textUpToCaret.slice(0, textUpToCaret.length - charToken.length).trim() === '';
+        if (isStartOfLine && charToken.length >= 2 && /^[A-Z0-9'.,\- ]*$/.test(charToken) && charToken === upper && /[A-Z]/.test(charToken)) {
+          isCharCandidate = true;
+        }
+      }
+
+      if (isCharCandidate) {
+        const rawNameToken = textUpToCaret.slice(charPrefixOffset);
+        token = rawNameToken.trimStart();
+        replaceStart = lineStart + charPrefixOffset + (rawNameToken.length - rawNameToken.trimStart().length);
+        const charUp = token.toUpperCase();
+        if (charUp.length >= 1 || isForcedChar) {
+          const charList = parsed.characters || [];
+          list = charList.filter(function (n) { return n.toUpperCase().startsWith(charUp); });
+        }
+      }
+    }
+
+    if (!list.length) { hideAc(); return; }
+
+    const items = list.slice(0, 8);
     const c = SW.caret.getCaretCoordinates(docEl, inputEl, pos);
     let left = M_LEFT + c.left;
     let top = M_TOP + c.top + 18;
     const boxH = Math.min(300, items.length * 30 + 10);
     if (top + boxH > editorEl.scrollTop + editorEl.clientHeight - 8) top = M_TOP + c.top - boxH - 4;
-    const maxLeft = M_LEFT + (PAPERS[paper].w - M_LEFT - M_RIGHT) - 240;
-    left = Math.max(M_LEFT, Math.min(left, maxLeft));
-    acState = { items: items, index: 0, top: top, left: left, replaceStart: replaceStart };
+    const paperWidth = PAPERS[paper] ? PAPERS[paper].w : 816;
+    const maxLeft = Math.min(left, paperWidth - 220);
+    left = Math.max(M_LEFT, maxLeft);
+
+    let index = 0;
+    if (acState && acState.items && acState.items.length) {
+      const prev = acState.items;
+      const same = prev.length === items.length && items.every(function (v, k) { return v === prev[k]; });
+      if (same) index = Math.min(acState.index, items.length - 1);
+    }
+    acState = { items: items, index: index, top: top, left: left, replaceStart: replaceStart };
     renderAc();
   }
 
   function scheduleAc() {
+    if (Date.now() < suppressAcUntil) return;
     clearTimeout(acTimer);
-    acTimer = setTimeout(computeAc, 140);
+    acTimer = setTimeout(computeAc, 120);
   }
 
   function hideAc() {
@@ -284,7 +786,7 @@
   }
 
   function renderAc() {
-    if (!acState) { acBox.hidden = true; return; }
+    if (!acState || !acState.items || !acState.items.length) { hideAc(); return; }
     acBox.hidden = false;
     acBox.style.top = acState.top + 'px';
     acBox.style.left = acState.left + 'px';
@@ -295,15 +797,25 @@
         util.escapeHtml(it) + '</button>';
     });
     acBox.innerHTML = html;
+    const activeBtn = acBox.querySelector('button.active');
+    if (activeBtn) {
+      activeBtn.scrollIntoView({ block: 'nearest' });
+    }
   }
 
   function acceptAc(item) {
     if (!acState) return;
     const pos = inputEl.selectionStart;
     const len = Math.max(0, pos - acState.replaceStart);
+    let insertStr = item;
+    if (SCENE_PREFIXES.includes(item.trim()) && !insertStr.endsWith(' ')) {
+      insertStr += ' ';
+    }
     inputEl.setSelectionRange(acState.replaceStart, acState.replaceStart + len);
-    insertText(item);
+    insertText(insertStr);
+    suppressAcUntil = Date.now() + 300;
     hideAc();
+    scheduleAc();
   }
 
   function insertText(text) {
@@ -362,6 +874,7 @@
       }
       if (e.key === 'Escape') {
         e.preventDefault();
+        suppressAcUntil = Date.now() + 300;
         hideAc();
         return;
       }
@@ -485,7 +998,10 @@
       body = '<div class="scene-list">' + scenes.map(function (s) {
         return '<button type="button" class="scene-item" data-idx="' + s.idx + '" title="' +
           util.escapeAttr(s.text) + '"><span class="scene-no">' + s.num +
-          '</span><span class="scene-text">' + util.escapeHtml(s.text) + '</span></button>';
+          '</span><span class="scene-text">' + util.escapeHtml(s.text) + '</span>' +
+          '<span class="scene-time' + (s.manual ? ' manual' : '') + '" title="' +
+          (s.manual ? 'Manual' : 'Estimated') + ' scene duration — click for breakdown">' + util.fmtTime(s.dur) +
+          '</span></button>';
       }).join('') + '</div>';
     } else {
       body = '<p class="empty-hint">No scene headings yet. Type a line like <span class="kbd">INT. OFFICE - DAY</span>.</p>';
@@ -527,6 +1043,8 @@
     $('btn-sidebar-close').innerHTML = util.icon('x');
     $('btn-help').innerHTML = util.icon('help');
     $('btn-theme').innerHTML = theme === 'dark' ? util.icon('sun') : util.icon('moon');
+    $('btn-time').innerHTML = util.icon('clock');
+    $('btn-time').classList.toggle('on', timeLabelsOn);
     $('btn-focus').innerHTML = focusMode ? util.icon('minimize') : util.icon('maximize');
     const el = $('save-status');
     if (saveStatus === 'saving') {
@@ -549,7 +1067,7 @@
 
   function makeProject(title) {
     const now = Date.now();
-    return { id: util.uid(), title: title, content: '', createdAt: now, updatedAt: now, archived: false };
+    return { id: util.uid(), title: title, content: DEFAULT_HEADER, createdAt: now, updatedAt: now, archived: false };
   }
 
   function selectProject(id) {
@@ -698,6 +1216,22 @@
       parsed.hasTitlePage ? 'Include title page' : 'No title page in this script'));
     body.appendChild(check);
 
+    const check2 = util.el('div', { class: 'field check' });
+    const cb2 = util.el('input', { type: 'checkbox', id: 'exp-stamp' });
+    cb2.checked = true;
+    check2.appendChild(cb2);
+    check2.appendChild(util.el('label', { for: 'exp-stamp' },
+      'Add export date/time footer to each page'));
+    body.appendChild(check2);
+
+    const check3 = util.el('div', { class: 'field check' });
+    const cb3 = util.el('input', { type: 'checkbox', id: 'exp-time' });
+    cb3.checked = timeLabelsOn;
+    check3.appendChild(cb3);
+    check3.appendChild(util.el('label', { for: 'exp-time' },
+      'Show scene & dialogue time labels in the left margin'));
+    body.appendChild(check3);
+
     const m = util.modal({
       title: 'Export PDF',
       body: body,
@@ -709,7 +1243,7 @@
           onClick: function () {
             m.close();
             util.toast('Exporting PDF…');
-            files.exportPdf(p, { pageSize: select.value, includeTitlePage: cb.checked })
+            files.exportPdf(p, { pageSize: select.value, includeTitlePage: cb.checked, includeStamp: cb2.checked, includeTime: cb3.checked })
               .then(function () { util.toast('PDF exported'); });
           }
         }
@@ -729,7 +1263,8 @@
       ['Ctrl/Cmd+P', 'Export PDF'],
       ['Ctrl/Cmd+Enter', 'Insert scene template'],
       ['Ctrl/Cmd+E', 'Toggle focus mode'],
-      ['Ctrl/Cmd+B', 'Toggle sidebar']
+      ['Ctrl/Cmd+B', 'Toggle sidebar'],
+      ['Ctrl/Cmd+Shift+T', 'Toggle time labels']
     ];
     const body = util.el('ul', { class: 'shortcut-list' });
     for (const r of rows) {
@@ -774,6 +1309,14 @@
     renderTopbar();
   }
 
+  function toggleTimeLabels() {
+    timeLabelsOn = !timeLabelsOn;
+    localStorage.setItem('swriter:timelabels', timeLabelsOn ? 'on' : 'off');
+    document.body.classList.toggle('time-labels-off', !timeLabelsOn);
+    renderTopbar();
+    renderTimeLabels();
+  }
+
   /* ---------------- events ---------------- */
 
   function bindEditorEvents() {
@@ -783,10 +1326,16 @@
       scheduleAc();
     });
     inputEl.addEventListener('keydown', onEditorKeydown);
-    inputEl.addEventListener('keyup', function () { keepCaretVisible(); scheduleAc(); });
-    inputEl.addEventListener('mouseup', function () { keepCaretVisible(); scheduleAc(); });
-    inputEl.addEventListener('click', function () { scheduleAc(); });
-    inputEl.addEventListener('select', function () { scheduleAc(); });
+    inputEl.addEventListener('keyup', function (e) {
+      keepCaretVisible();
+      if (['ArrowUp', 'ArrowDown', 'Enter', 'Tab', 'Escape'].includes(e.key)) return;
+      scheduleAc();
+    });
+    inputEl.addEventListener('mouseup', function () { keepCaretVisible(); });
+    inputEl.addEventListener('click', function () {
+      if (!acState) scheduleAc();
+    });
+    inputEl.addEventListener('select', function () { });
     inputEl.addEventListener('compositionstart', function () { composing = true; });
     inputEl.addEventListener('compositionend', function () { composing = false; scheduleAc(); });
   }
@@ -844,6 +1393,14 @@
     });
 
     $('outline-panel').addEventListener('click', function (e) {
+      const pill = e.target.closest('.scene-time');
+      if (pill) {
+        e.preventDefault();
+        e.stopPropagation();
+        const item = pill.closest('.scene-item');
+        if (item) openSceneBreakdown(Number(item.dataset.idx));
+        return;
+      }
       const item = e.target.closest('.scene-item');
       if (item) scrollToScene(Number(item.dataset.idx));
     });
@@ -882,6 +1439,7 @@
     $('btn-sidebar').addEventListener('click', toggleSidebar);
     $('btn-sidebar-close').addEventListener('click', toggleSidebar);
     $('btn-theme').addEventListener('click', toggleTheme);
+    $('btn-time').addEventListener('click', toggleTimeLabels);
     $('btn-focus').addEventListener('click', function () { toggleFocus(); });
     $('btn-help').addEventListener('click', openShortcuts);
     $('btn-export').addEventListener('click', openExport);
@@ -900,6 +1458,7 @@
       if (k === 's') { e.preventDefault(); flushSave(); }
       else if (k === 'e') { e.preventDefault(); toggleFocus(); }
       else if (k === 'b') { e.preventDefault(); toggleSidebar(); }
+      else if (k === 't' && e.shiftKey) { e.preventDefault(); toggleTimeLabels(); }
       else if (k === 'p') { e.preventDefault(); openExport(); }
       else if (k === 'enter') {
         if (document.activeElement !== $('title-input')) { e.preventDefault(); insertSceneTemplate(); }
@@ -916,8 +1475,16 @@
     acBox.addEventListener('mouseover', function (e) {
       const b = e.target.closest('button[data-k]');
       if (b && acState) {
-        acState.index = Number(b.dataset.k);
-        renderAc();
+        const k = Number(b.dataset.k);
+        if (acState.index !== k) {
+          acState.index = k;
+          const btns = acBox.querySelectorAll('button[data-k]');
+          btns.forEach(function (btn, idx) {
+            const isActive = idx === k;
+            btn.classList.toggle('active', isActive);
+            btn.setAttribute('aria-selected', isActive ? 'true' : 'false');
+          });
+        }
       }
     });
   }
@@ -926,6 +1493,7 @@
 
   async function init() {
     document.documentElement.setAttribute('data-theme', theme);
+    document.body.classList.toggle('time-labels-off', !timeLabelsOn);
     sidebarEl.style.display = sidebarOpen ? '' : 'none';
     buildFocusExit();
     bindEditorEvents();

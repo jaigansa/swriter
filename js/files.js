@@ -38,6 +38,7 @@
   function exportPdf(project, opts) {
     return SW.pdf.ensureTamilFont().then(function () {
       const parsed = SW.fountain.parseFountain(project.content);
+      SW.fountain.applyTimeLabels(parsed, project.timeLabels);
       const bytes = SW.pdf.buildPdf(parsed, opts);
       download(util.slugify(project.title) + '.pdf',
         new Blob([bytes], { type: 'application/pdf' }));
@@ -67,7 +68,8 @@
                   content: p.content == null ? '' : p.content,
                   createdAt: p.createdAt || Date.now(),
                   updatedAt: p.updatedAt || Date.now(),
-                  archived: !!p.archived
+                  archived: !!p.archived,
+                  timeLabels: (p.timeLabels && typeof p.timeLabels === 'object') ? p.timeLabels : undefined
                 };
               });
               resolve({ kind: 'json', projects: projects });
@@ -94,7 +96,8 @@
       content: data.content == null ? '' : data.content,
       createdAt: data.createdAt || Date.now(),
       updatedAt: data.updatedAt || Date.now(),
-      archived: !!data.archived
+      archived: !!data.archived,
+      timeLabels: (data.timeLabels && typeof data.timeLabels === 'object') ? data.timeLabels : undefined
     };
   }
 
